@@ -1,0 +1,344 @@
+module adder(
+ input A,
+ input B,
+ input cin,
+ output sum,
+ output cout
+);
+wire a1;
+wire a3;
+wire a4;
+
+xor(a1,A,B);
+xor(sum,a1,cin);
+
+and(a3,A,B);
+and(a4,a1,cin);
+
+or(cout,a3,a4);
+endmodule
+
+module counter(
+    input clk, rst, en,
+    output [3:0] count
+);
+    wire [3:0] n_count;
+    wire c0, c1, c2;
+
+    xor (n_count[0], count[0], en);
+    and (c0, count[0], en);
+
+    xor (n_count[1], count[1], c0);
+    and (c1, count[1], c0);
+
+    xor (n_count[2], count[2], c1);
+    and (c2, count[2], c1);
+
+    xor (n_count[3], count[3], c2);
+
+    dff ff0 (.D(n_count[0]), .clk(clk), .rst(rst), .q(count[0]));
+    dff ff1 (.D(n_count[1]), .clk(clk), .rst(rst), .q(count[1]));
+    dff ff2 (.D(n_count[2]), .clk(clk), .rst(rst), .q(count[2]));
+    dff ff3 (.D(n_count[3]), .clk(clk), .rst(rst), .q(count[3]));
+endmodule
+
+module dff(
+ input D, clk, rst,
+ output reg q,
+ output qb
+);
+    always @(posedge clk) begin
+        if (rst)
+            q <= 1'b0;
+        else
+            q <= D;
+    end
+
+    assign qb = ~q;
+endmodule
+
+module divider(
+    input  [7:0] pin,
+    input  [7:0] D,
+    input  load,
+    input  rst,
+    input  clk,
+
+    output [7:0] r,
+    output [7:0] Qu,
+    output valid        
+);
+
+    wire [7:0] Q;
+    wire [7:0] q;
+    wire cout;
+    wire [7:0] m;
+    wire [7:0] sum;
+
+ 
+    wire [3:0] count;
+    wire t_rst;
+    wire t_en;
+    wire not_c2, not_c1, not_c0;
+
+
+    or r_timer (t_rst, rst, load);
+
+    
+    not (not_c2, count[2]);
+    not (not_c1, count[1]);
+    not (not_c0, count[0]);
+    and (valid, count[3], not_c2, not_c1, not_c0);
+
+    
+    not (t_en, valid);
+
+    counter c (
+        .clk(clk),
+        .rst(t_rst),
+        .en(t_en),
+        .count(count)
+    );
+
+    
+    wire [7:0] qshift;
+    assign qshift = {q[6], q[5], q[4], q[3], q[2], q[1], q[0], Q[7]};
+
+    shift s1(
+        .pin(pin),
+        .load(load),
+        .clk(clk),
+        .in(cout),
+        .Q(Q),
+        .rst(rst)
+    );
+
+    
+    fadder f1(
+        .A(qshift),
+        .B(D),
+        .cin(1'b1),
+        .sum(sum),
+        .cout(cout)
+    );
+
+    
+    mux8 m1(
+        .a(qshift),
+        .b(sum),
+        .sel(cout),
+        .q(m)
+    );
+
+    
+    dff d0 (.D(m[0]), .clk(clk), .rst(rst), .q(q[0]));
+    dff d1 (.D(m[1]), .clk(clk), .rst(rst), .q(q[1]));
+    dff d2 (.D(m[2]), .clk(clk), .rst(rst), .q(q[2]));
+    dff d3 (.D(m[3]), .clk(clk), .rst(rst), .q(q[3]));
+    dff d4 (.D(m[4]), .clk(clk), .rst(rst), .q(q[4]));
+    dff d5 (.D(m[5]), .clk(clk), .rst(rst), .q(q[5]));
+    dff d6 (.D(m[6]), .clk(clk), .rst(rst), .q(q[6]));
+    dff d7 (.D(m[7]), .clk(clk), .rst(rst), .q(q[7]));
+
+    assign r = q;
+    assign Qu = Q;
+
+endmodule
+
+
+module fadder(
+    input  [7:0] A,
+    input  [7:0] B,
+    input  cin,
+    output [7:0] sum,
+    output cout
+);
+
+wire c1, c2, c3, c4, c5, c6, c7;
+wire [7:0] bb;
+
+
+not(bb[0], B[0]);
+not(bb[1], B[1]);
+not(bb[2], B[2]);
+not(bb[3], B[3]);
+not(bb[4], B[4]);
+not(bb[5], B[5]);
+not(bb[6], B[6]);
+not(bb[7], B[7]);
+
+adder a0(
+    .A(A[0]),
+    .B(bb[0]),
+    .cin(cin),
+    .sum(sum[0]),
+    .cout(c1)
+);
+
+adder a1(
+    .A(A[1]),
+    .B(bb[1]),
+    .cin(c1),
+    .sum(sum[1]),
+    .cout(c2)
+);
+
+adder a2(
+    .A(A[2]),
+    .B(bb[2]),
+    .cin(c2),
+    .sum(sum[2]),
+    .cout(c3)
+);
+
+adder a3(
+    .A(A[3]),
+    .B(bb[3]),
+    .cin(c3),
+    .sum(sum[3]),
+    .cout(c4)
+);
+
+adder a4(
+    .A(A[4]),
+    .B(bb[4]),
+    .cin(c4),
+    .sum(sum[4]),
+    .cout(c5)
+);
+
+adder a5(
+    .A(A[5]),
+    .B(bb[5]),
+    .cin(c5),
+    .sum(sum[5]),
+    .cout(c6)
+);
+
+adder a6(
+    .A(A[6]),
+    .B(bb[6]),
+    .cin(c6),
+    .sum(sum[6]),
+    .cout(c7)
+);
+
+adder a7(
+    .A(A[7]),
+    .B(bb[7]),
+    .cin(c7),
+    .sum(sum[7]),
+    .cout(cout)
+);
+
+endmodule
+
+module mux1(
+    input a,b,sel,
+    output q
+);
+
+wire c,d,selb;
+not(selb,sel);
+and(c,selb,a);
+and(d,sel,b);
+or(q,c,d);
+endmodule
+
+module mux8(
+    input  [7:0] a,
+    input  [7:0] b,
+    input        sel,
+    output [7:0] q
+);
+
+mux1 m0(
+    .a(a[0]),
+    .b(b[0]),
+    .sel(sel),
+    .q(q[0])
+);
+
+mux1 m1(
+    .a(a[1]),
+    .b(b[1]),
+    .sel(sel),
+    .q(q[1])
+);
+
+mux1 m2(
+    .a(a[2]),
+    .b(b[2]),
+    .sel(sel),
+    .q(q[2])
+);
+
+mux1 m3(
+    .a(a[3]),
+    .b(b[3]),
+    .sel(sel),
+    .q(q[3])
+);
+
+mux1 m4(
+    .a(a[4]),
+    .b(b[4]),
+    .sel(sel),
+    .q(q[4])
+);
+
+mux1 m5(
+    .a(a[5]),
+    .b(b[5]),
+    .sel(sel),
+    .q(q[5])
+);
+
+mux1 m6(
+    .a(a[6]),
+    .b(b[6]),
+    .sel(sel),
+    .q(q[6])
+);
+
+mux1 m7(
+    .a(a[7]),
+    .b(b[7]),
+    .sel(sel),
+    .q(q[7])
+);
+
+endmodule
+
+module shift(
+    input  [7:0] pin,
+    input clk,
+    input in,
+    input rst,
+    output [7:0] Q,
+    input load
+);
+
+wire [7:0] mo;
+wire [7:0] qshift;
+
+
+assign qshift = {Q[6], Q[5], Q[4], Q[3], Q[2], Q[1], Q[0], in};
+
+mux8 m1(
+    .a(qshift),
+    .b(pin),
+    .sel(load),
+    .q(mo)
+);
+
+dff d0 (.D(mo[0]), .clk(clk), .rst(rst), .q(Q[0]));
+dff d1 (.D(mo[1]), .clk(clk), .rst(rst), .q(Q[1]));
+dff d2 (.D(mo[2]), .clk(clk), .rst(rst), .q(Q[2]));
+dff d3 (.D(mo[3]), .clk(clk), .rst(rst), .q(Q[3]));
+dff d4 (.D(mo[4]), .clk(clk), .rst(rst), .q(Q[4]));
+dff d5 (.D(mo[5]), .clk(clk), .rst(rst), .q(Q[5]));
+dff d6 (.D(mo[6]), .clk(clk), .rst(rst), .q(Q[6]));
+dff d7 (.D(mo[7]), .clk(clk), .rst(rst), .q(Q[7]));
+
+endmodule
