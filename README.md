@@ -1,228 +1,124 @@
 # Binary Divider Architectures in Verilog
 
-An RTL-level study and implementation of five binary division architectures for an 8-bit datapath, covering algorithmic design, structural Verilog implementation, simulation, and Vivado implementation analysis.
+This repo holds the work from my internship project, where I implemented and compared five different binary division architectures in Verilog for an 8-bit datapath. The goal was to go beyond just "make division work in hardware" and actually understand *why* you'd pick one approach over another — in terms of speed, area, and complexity.
 
-## Project Overview
+Division is one of those operations that looks trivial in software (`a / b`) but turns into a real design problem in hardware, mostly because you can't just compute the quotient in one shot — each bit usually depends on the remainder from the step before it. That dependency is what makes this a genuinely interesting RTL problem, and it's why there isn't one "correct" divider — just different trade-offs.
 
-Binary division is a relatively complex arithmetic operation in digital hardware because quotient generation depends on intermediate remainder calculations.
+I built and tested:
 
-This project implements and analyzes five different divider architectures:
+- Restoring Division
+- Non-Restoring Division
+- SRT (Sweeney-Robertson-Tocher) Division
+- Newton-Raphson Division
+- Goldschmidt Division
 
-- **Restoring Division**
-- **Non-Restoring Division**
-- **SRT (Sweeney, Robertson, and Tocher) Division**
-- **Newton-Raphson Division**
-- **Goldschmidt Division**
+The first three are the classic "digit-recurrence" style — shift, subtract, check, repeat. The last two take a completely different approach based on multiplying by successive approximations of the reciprocal. I wanted to implement both families so I could actually compare them instead of just reading about the differences.
 
-The architectures are studied from both algorithmic and hardware perspectives, with emphasis on the trade-offs between speed, hardware resources, and implementation complexity.
+## How the architectures work
 
----
+### Restoring Division
+`src/restoring/restoring_divider.v`
 
-## Architectures
+This is the most straightforward of the bunch, and honestly a good place to start if you've never built a divider before. Each cycle it shifts, subtracts the divisor, and checks the sign of the result. If the subtraction went negative, it "restores" the previous remainder by adding the divisor back before moving on. It's built from fairly standard blocks — adders, a shift register, a mux, and a counter to track iterations. Simple to reason about, but you pay for that simplicity with an extra correction step whenever the subtraction fails.
 
-### 1. Restoring Division
+### Non-Restoring Division
+`src/non_restoring/non_restoring_divider.v`
 
-A sequential digit-recurrence architecture based on:
+This is basically the same idea as restoring division, but smarter about avoiding wasted cycles. Instead of restoring the remainder immediately after a negative subtraction, it just remembers the sign and decides whether to add or subtract on the *next* iteration. Everything runs in two's complement, so there's no separate restore step — just a correction pass at the very end to clean up the final remainder. It's a small change on paper but it noticeably simplifies the control logic.
 
-- Shift
-- Subtract
-- Check
-- Restore when the subtraction produces a negative remainder
+### SRT Division
+`src/srt/srt_divider.v`
 
-The RTL implementation uses structural components such as adders, registers, multiplexers, counters, and shifting logic.
-
-**Source:** `src/restoring/restoring_divider.v`
-
----
-
-### 2. Non-Restoring Division
-
-A digit-recurrence architecture that avoids the explicit restoration operation by making the next add/subtract decision based on the sign of the partial remainder.
-
-The implementation uses two's-complement arithmetic, an ALU, registers, shifting logic, control/counting logic, and a final correction stage.
-
-**Source:** `src/non_restoring/non_restoring_divider.v`
-
----
-
-### 3. SRT Division
-
-Sweeney-Robertson-Tocher division uses redundant quotient digits and quotient-selection logic to reduce the amount of arithmetic required during division.
-
-The implementation includes:
+This one's more involved. SRT division uses redundant quotient digits (instead of committing to a single bit each cycle) and a quotient-selection function to figure out which digit to pick. That flexibility is what lets it reduce arithmetic work per cycle, but it comes at the cost of extra logic:
 
 - Divisor normalization
 - Quotient-selection logic
-- Redundant quotient representation
-- Arithmetic/ALU logic
-- Quotient recombination
-- Correction logic
+- Redundant digit representation
+- The ALU/arithmetic core
+- A recombination and correction stage at the end
 
-**Source:** `src/srt/srt_divider.v`
+This was the most fiddly of the three digit-recurrence designs to get working correctly — the redundant representation makes debugging less intuitive than a plain restoring/non-restoring design.
 
----
+### Newton-Raphson Division
+`src/newton_raphson/newton_raphson_divider.v`
 
-### 4. Newton-Raphson Division
+Here's where the approach changes entirely. Instead of grinding through bit-by-bit subtraction, this method approximates 1/divisor and refines that approximation with a couple of multiplication steps until it's accurate enough to multiply by the numerator. The implementation needed:
 
-A multiplicative division architecture based on reciprocal approximation and iterative refinement.
+- Normalization of the divisor
+- A LUT to get an initial reciprocal guess
+- Fixed-point arithmetic throughout
+- A parallel multiplier
+- Two's complement handling
+- Rounding and denormalization at the end
 
-The implementation includes:
+Convergence is fast (quadratic, in theory), but you're trading iteration count for a much heavier datapath — multipliers aren't cheap.
 
-- Divisor normalization
-- LUT-based initial reciprocal approximation
-- Fixed-point arithmetic
-- Parallel multiplier architecture
-- Two's-complement arithmetic
-- Dynamic rounding
-- Denormalization logic
+### Goldschmidt Division
+`src/goldschmidt/goldschmidt_divider.v`
 
-**Source:** `src/newton_raphson/newton_raphson_divider.v`
+Goldschmidt is a close cousin of Newton-Raphson — same general idea of reciprocal approximation, but instead of refining the reciprocal directly, it scales the numerator and denominator together using a shared convergence factor until the denominator approaches 1. It reuses a lot of the hardware blocks from the Newton-Raphson implementation (normalization, LUT seed, multiplier), plus its own convergence-factor generation logic. One nice property is that its multiplications can run in parallel more easily than Newton-Raphson's, which matters if you're optimizing for latency rather than area.
 
----
+## Comparing the five
 
-### 5. Goldschmidt Division
+| Architecture   | Family           | Core idea                              | What stands out                          |
+|----------------|------------------|-----------------------------------------|-------------------------------------------|
+| Restoring      | Digit-recurrence | Shift, subtract, restore                | Simplest to build and debug               |
+| Non-Restoring  | Digit-recurrence | Sign-based add/subtract decision        | Skips the explicit restore step           |
+| SRT            | Digit-recurrence | Redundant quotient digits               | Less arithmetic, more control complexity  |
+| Newton-Raphson | Multiplicative   | Iterative reciprocal refinement         | Converges fast, needs a real multiplier   |
+| Goldschmidt    | Multiplicative   | Parallel numerator/denominator scaling  | Similar cost to N-R, more parallel-friendly |
 
-Goldschmidt division uses simultaneous scaling of the numerator and denominator with a common convergence factor.
+For an 8-bit datapath specifically, my takeaway was that the digit-recurrence designs are the more sensible choice — the multiplicative methods are built to shine on wider datapaths where cutting the iteration count really pays off, but at 8 bits that advantage doesn't outweigh the extra multiplier hardware.
 
-The implementation reuses foundational hardware blocks from the Newton-Raphson architecture and includes:
+## Vivado results
 
-- Normalization
-- LUT-based reciprocal seed
-- Multiplication
-- Convergence-factor generation
-- Dynamic rounding
-- Denormalization
+All five designs were synthesized and implemented in Vivado, and the full reports (timing, utilization, power) are in `docs/`. A couple of numbers worth calling out here:
 
-**Source:** `src/goldschmidt/goldschmidt_divider.v`
+**Slice LUT usage** (synthesis vs. implementation):
 
----
+| Architecture   | Synthesis | Implementation |
+|----------------|-----------|-----------------|
+| Restoring      | 139       | 138             |
+| Non-Restoring  | 142       | 142             |
+| SRT            | 204       | 204             |
+| Newton-Raphson | 291       | 290             |
+| Goldschmidt    | 323       | 321             |
 
-## Architecture Comparison
+That's roughly a 2x jump in LUT count going from the digit-recurrence designs to the multiplicative ones — which lines up with expectations, given how much extra logic the reciprocal approach needs. Goldschmidt also pulled in a dedicated F7 multiplier resource during implementation, which the other four didn't.
 
-| Architecture | Family | Main Approach | Hardware Characteristics |
-|---|---|---|---|
-| Restoring | Digit-recurrence | Shift, subtract, restore | Simple and compact |
-| Non-Restoring | Digit-recurrence | Sign-dependent add/subtract | Avoids explicit restoration |
-| SRT | Digit-recurrence | Redundant quotient digits | More complex, reduced arithmetic |
-| Newton-Raphson | Multiplicative | Reciprocal approximation | Fast convergence, higher hardware cost |
-| Goldschmidt | Multiplicative | Simultaneous numerator/denominator scaling | Fast convergence, multiplier-intensive |
+**Estimated on-chip power**:
 
-For the 8-bit datapath studied in this project, the digit-recurrence architectures provide a practical balance of hardware cost and performance, while the multiplicative architectures demonstrate higher-speed convergence at the cost of substantially greater hardware complexity.
+| Architecture   | Synthesis | Implementation |
+|----------------|-----------|-----------------|
+| Restoring      | 6.201 W   | 6.106 W         |
+| Non-Restoring  | 9.598 W   | 9.451 W         |
+| SRT            | 15.504 W  | 11.361 W        |
+| Newton-Raphson | 13.941 W  | 13.312 W        |
+| Goldschmidt    | 13.643 W  | 13.263 W        |
 
----
+Worth flagging: these are Vivado's vectorless power estimates, not something measured off real silicon, so treat them as a way to compare the designs relative to each other rather than absolute numbers. Still, the gap between Restoring and everything else is large enough to be a meaningful part of the comparison, not just noise.
 
-## Vivado Implementation Analysis
+## What I took away from this
 
-The repository includes Vivado synthesis and implementation reports for all five architectures.
+The digit-recurrence family (Restoring, Non-Restoring, SRT) is where you go if you want something compact and predictable — good default choice for smaller datapaths. Non-Restoring in particular felt like the best "bang for your buck": barely more complex than Restoring, but a bit more efficient.
 
-The reports contain:
+The multiplicative family (Newton-Raphson, Goldschmidt) earns its complexity by converging fast, but that speed is bought with real hardware cost — bigger multipliers, LUT tables, wider fixed-point paths, and extra rounding logic. For this 8-bit case, that trade didn't pay off; I'd expect the balance to tip the other way as the datapath gets wider and the number of digit-recurrence iterations starts to actually hurt.
 
-- Timing analysis
-- Resource utilization
-- On-chip power estimation
-- Synthesis results
-- Post-implementation results
+## Repo layout
 
-### Resource Utilization
-
-The reported Slice LUT utilization shows the relative hardware complexity of the architectures:
-
-| Architecture | Synthesis Slice LUTs | Implementation Slice LUTs |
-|---|---:|---:|
-| SRT | 204 | 204 |
-| Non-Restoring | 142 | 142 |
-| Restoring | 139 | 138 |
-| Newton-Raphson | 291 | 290 |
-| Goldschmidt | 323 | 321 |
-
-Goldschmidt additionally uses a reported **F7 Multiplier** resource in the implementation report.
-
-These results illustrate the increased hardware requirements of the multiplicative approaches compared with the simpler digit-recurrence designs.
-
----
-
-## Power Analysis
-
-The Vivado reports contain the following **total on-chip power estimates**:
-
-| Architecture | Synthesis Estimate | Implementation Estimate |
-|---|---:|---:|
-| Restoring | 6.201 W | 6.106 W |
-| Non-Restoring | 9.598 W | 9.451 W |
-| SRT | 15.504 W | 11.361 W |
-| Newton-Raphson | 13.941 W | 13.312 W |
-| Goldschmidt | 13.643 W | 13.263 W |
-
-### Important Note on Power Results
-
-The power figures in the Vivado report are **tool-based vectorless estimates**, not measurements from physical hardware.
-
-Vivado's report indicates that the power analysis is based on the synthesized/implemented design and available activity assumptions. Therefore, these values should be interpreted as **estimates for comparative implementation analysis**, rather than experimentally measured power consumption.
-
-The relatively high estimated power values are an important part of the architectural comparison and demonstrate the effect of switching activity and hardware complexity in the implemented designs.
-
----
-
-## Key Engineering Trade-offs
-
-### Digit-Recurrence Architectures
-
-**Restoring, Non-Restoring, and SRT** operate through iterative quotient generation.
-
-Their main advantages are:
-
-- Relatively simple datapaths
-- Lower hardware complexity
-- Suitable for small datapaths
-- Predictable iterative operation
-
-Restoring and Non-Restoring division require one quotient bit per iteration, while SRT introduces additional quotient-selection and redundant-digit logic to improve the arithmetic process.
-
-### Multiplicative Architectures
-
-**Newton-Raphson and Goldschmidt** use reciprocal approximation and multiplication-based refinement.
-
-Their main advantages are:
-
-- Rapid convergence
-- High-performance architecture
-- Parallel arithmetic opportunities
-
-Their disadvantages include:
-
-- Larger multiplier structures
-- LUT requirements
-- Wider arithmetic datapaths
-- Additional rounding and scaling logic
-- Greater hardware complexity
-
-For an 8-bit datapath, the project analysis indicates that these additional resources can outweigh the benefit of reducing the number of iterative operations.
-
----
-
-## Repository Structure
-
-```text
+```
 verilog-internship/
 │
 ├── README.md
 │
 ├── src/
-│   ├── restoring/
-│   │   └── restoring_divider.v
-│   │
-│   ├── non_restoring/
-│   │   └── non_restoring_divider.v
-│   │
-│   ├── srt/
-│   │   └── srt_divider.v
-│   │
-│   ├── newton_raphson/
-│   │   └── newton_raphson_divider.v
-│   │
-│   └── goldschmidt/
-│       └── goldschmidt_divider.v
+│   ├── restoring/restoring_divider.v
+│   ├── non_restoring/non_restoring_divider.v
+│   ├── srt/srt_divider.v
+│   ├── newton_raphson/newton_raphson_divider.v
+│   └── goldschmidt/goldschmidt_divider.v
 │
 └── docs/
     ├── architecture_and_theory.pdf
     └── vivado_implementation_results.pdf
+```
